@@ -22,3 +22,7 @@ coverage/
 urls.txt
 stream-write.js
 toflat.js
+
+# benchmark fixtures and results
+/bench/.cache/
+/bench/results/
