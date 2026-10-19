@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { setDeferredSinks } from './sinks.mjs';
 
 export const REPO_ROOT = resolve(import.meta.dirname, '..', '..');
 const MB = 1024 * 1024;
@@ -91,6 +92,7 @@ export async function scenario(spec, body) {
 
     const budget = values['buffer-budget'];
     const sampler = budget === undefined ? undefined : bufferSampler();
+    setDeferredSinks(sampler !== undefined);
 
     const failures = [];
     const expect = (label, actual, expected) => {

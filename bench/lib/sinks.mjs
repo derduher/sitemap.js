@@ -5,6 +5,22 @@
 import { Transform, Writable } from 'node:stream';
 
 /**
+ * Whether sinks acknowledge some writes on a later event-loop turn. A sink
+ * that always calls back synchronously never applies backpressure, so the
+ * bounded-memory check turns this on (with --buffer-budget) to make a
+ * pipeline that ignores backpressure pile up output. Deferring every 64th
+ * write is enough for that and keeps the check fast. Measured runs leave it
+ * off, so the sink costs as little as possible.
+ */
+let deferWrites = false;
+let writes = 0;
+export function setDeferredSinks(value) {
+  deferWrites = value;
+}
+const done = (cb) =>
+  deferWrites && ++writes % 64 === 0 ? setImmediate(cb) : cb();
+
+/**
  * Count the occurrences of `needle` in a byte stream, including ones split
  * across chunk boundaries.
  */
@@ -51,7 +67,7 @@ export function countingSink(tag = '</url>') {
   const sink = new Writable({
     write(chunk, _enc, cb) {
       counter.add(chunk);
-      cb();
+      done(cb);
     },
   });
   sink.counter = counter;
@@ -77,7 +93,7 @@ export function objectCounter() {
     objectMode: true,
     write(_item, _enc, cb) {
       sink.count++;
-      cb();
+      done(cb);
     },
   });
   sink.count = 0;

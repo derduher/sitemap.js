@@ -70,3 +70,20 @@ jobs:
       # `npm run test:coverage` builds first, so there is no separate build step.
       - name: Unit Tests with Coverage Thresholds
         run: npm run test:coverage
+
+  # Checks that the streaming pipelines finish 1M items under a capped heap
+  # and Buffer budget. The heap cap and Buffer accounting behave the same on
+  # every platform, so one Linux leg is enough. It takes about a minute,
+  # mostly parse-xml reading 1 GB of XML, which is too slow for `npm test`.
+  memory:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/configure-nodejs
+        with:
+          node-version: 24.x
+
+      # `npm run test:memory` builds first, so there is no separate build step.
+      - name: Bounded-memory check
+        run: npm run test:memory

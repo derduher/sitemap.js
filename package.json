@@ -47,6 +47,7 @@
     "test": "npm run build && node --experimental-strip-types --test tests/*.test.ts",
     "test:coverage": "npm run build && node --experimental-strip-types --experimental-test-coverage --test-coverage-branches=80 --test-coverage-functions=90 --test-coverage-lines=90 --test tests/*.test.ts",
     "test:full": "npm run lint && npm run test:coverage && npm run test:xmllint",
+    "test:memory": "npm run build && node bench/memory-bound.mjs",
     "test:perf": "node ./tests/perf.mjs",
     "test:schema": "node ./tests/xmllint-schema.mjs",
     "test:typecheck": "tsc --noEmit",
