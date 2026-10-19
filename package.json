@@ -37,6 +37,7 @@
   ],
   "scripts": {
     "bench": "npm run build && node bench/run.mjs",
+    "bench:compare": "node bench/compare.mjs",
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint \"{lib,tests}/**/*.ts\" ./cli.ts",
     "lint:fix": "eslint --fix \"{lib,tests}/**/*.ts\" ./cli.ts",

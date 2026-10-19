@@ -74,7 +74,7 @@ try {
     const exportJson = join(values.results, `${name}.json`);
     runHyperfine(
       hyperfineArgs(name, {
-        commands: [{ lib: REPO_ROOT }],
+        libs: [REPO_ROOT],
         runs: Number(values.runs),
         warmup: Number(values.warmup),
         exportJson,

@@ -65,13 +65,19 @@ const q = (arg) =>
  *
  * @param {string} name - Scenario name
  * @param {object} opts
- * @param {{name?: string, lib: string}[]} opts.commands - One command per
- *   library build; `name` labels it in the results (bench/compare.mjs).
+ * @param {string[]} opts.libs - Package directories of the library builds
+ *   to run. With more than one (bench/compare.mjs), the build becomes a
+ *   hyperfine parameter, `lib`, in the order given.
  * @param {number} opts.runs
  * @param {number} opts.warmup
  * @param {string} opts.exportJson
+ * @param {boolean} [opts.ignoreRunsOverride] - Use `runs` even when the
+ *   scenario sets its own run count
  */
-export function hyperfineArgs(name, { commands, runs, warmup, exportJson }) {
+export function hyperfineArgs(
+  name,
+  { libs, runs, warmup, exportJson, ignoreRunsOverride = false }
+) {
   const config = SCENARIOS[name];
   const node = process.execPath;
   const script = join(REPO_ROOT, 'bench', 'scenarios', `${name}.mjs`);
@@ -82,7 +88,7 @@ export function hyperfineArgs(name, { commands, runs, warmup, exportJson }) {
     '--warmup',
     String(warmup),
     '--runs',
-    String(config.runs ?? runs),
+    String(ignoreRunsOverride ? runs : (config.runs ?? runs)),
   ];
   if (config.setup) {
     args.push(
@@ -90,26 +96,25 @@ export function hyperfineArgs(name, { commands, runs, warmup, exportJson }) {
       [node, join(REPO_ROOT, 'bench', 'fixtures.mjs'), name].map(q).join(' ')
     );
   }
+  let command = [node, script].map(q).join(' ');
+  if (libs.length > 1) {
+    if (libs.some((lib) => lib.includes(','))) {
+      throw new Error(`Library paths can't contain commas: ${libs.join(' ')}`);
+    }
+    args.push('-L', 'lib', libs.join(','));
+    command += ' --lib {lib}';
+  } else {
+    command += ` --lib ${q(libs[0])}`;
+  }
   if (config.sizes) {
     args.push('-L', 'size', config.sizes.join(','));
+    command += ' --size {size}';
   }
   if (config.levels) {
     args.push('-L', 'level', config.levels.join(','));
+    command += ' --level {level}';
   }
-  args.push('--export-json', exportJson);
-  for (const { name: label, lib } of commands) {
-    if (label) {
-      args.push('-n', label);
-    }
-    let command = [node, script, '--lib', lib].map(q).join(' ');
-    if (config.sizes) {
-      command += ' --size {size}';
-    }
-    if (config.levels) {
-      command += ' --level {level}';
-    }
-    args.push(command);
-  }
+  args.push('--export-json', exportJson, command);
   return args;
 }
 

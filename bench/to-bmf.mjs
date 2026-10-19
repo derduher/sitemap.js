@@ -40,15 +40,19 @@ function unitValue(field, unit, label) {
   return field.value;
 }
 
-/** Read one hyperfine export into benchmarks with per-run samples. */
-function readExport(file) {
+/**
+ * Read one hyperfine export into benchmarks with per-run samples.
+ *
+ * @param {string} file
+ * @param {string} [scenario] - Defaults to the file's base name
+ */
+export function readExport(file, scenario = basename(file, '.json')) {
   const json = JSON.parse(readFileSync(file, 'utf8'));
   if (json.schema_version !== 2) {
     throw new Error(
       `${file}: hyperfine JSON schema_version is ${json.schema_version ?? 'missing'}, expected 2. Re-run with hyperfine 2.0.0 or later.`
     );
   }
-  const scenario = basename(file, '.json');
   return json.results.map((result) => {
     // Schema 2 wraps each parameter as { value }.
     const params = Object.fromEntries(
