@@ -31,16 +31,36 @@ const __dirname = dirname(__filename);
 
 const finishedP = promisify(finished);
 
-const [
-  runs = 10,
-  batchSize = 10,
-  testName = 'stream',
-  measureMemory = false,
-] = process.argv.slice(2);
-const unit = measureMemory ? 'mb' : 'ms';
-console.log(
-  'npm run test:perf -- [number of runs = 10] [batch size = 10] [stream(default)|combined] [measure peak memory = false]'
-);
+const SCENARIOS = [
+  'stream',
+  'promise',
+  'stream-2',
+  'xmlstream',
+  'parseSitemap',
+  'parseSitemapStreamWrite',
+  'parseSitemapLoopWrite',
+  'parseSitemapWithMerge',
+];
+const USAGE = `npm run test:perf -- [number of runs = 10] [batch size = 10] [${SCENARIOS.join('|')}]`;
+
+const args = process.argv.slice(2);
+const [runs = 10, batchSize = 10, testName = 'stream'] = args;
+const unit = 'ms';
+console.log(USAGE);
+
+// Memory mode reported the process's lifetime peak RSS, which never decreases,
+// so every sample after the first few repeated the same value. It was removed;
+// use `npm run bench`, which reads peak memory per process.
+if (args.length > 3) {
+  console.error(
+    'Memory mode was removed. For peak memory, run `npm run bench` instead.'
+  );
+  process.exit(2);
+}
+if (!SCENARIOS.includes(testName)) {
+  console.error(`Unknown scenario "${testName}".`);
+  process.exit(2);
+}
 
 function resetLine() {
   clearLine(process.stderr, 0);
@@ -72,30 +92,18 @@ function delay(time) {
   return new Promise((resolve) => setTimeout(resolve, time));
 }
 
-function normalizedRss() {
-  const nodeVersion = Number(process.version.match(/^v(\d+\.\d+)/)[1]);
-  const isMac = process.platform === 'darwin';
-  // Node 20.3.0 included libuv 1.45.0, which fixes
-  // Mac reporting of `maxRSS` to be `KB` insteead of `bytes`.
-  // All other platforms were returning `KB` before.
-  const divisor = isMac && nodeVersion < 20.3 ? 1024 ** 2 : 1024;
-  return process.resourceUsage().maxRSS / divisor;
+function cpuTimeMicros() {
+  const { userCPUTime, systemCPUTime } = process.resourceUsage();
+  return userCPUTime + systemCPUTime;
 }
 
 async function batch(durations, runNum, fn) {
   for (let i = 0; i < batchSize; i++) {
-    const start = process.resourceUsage().userCPUTime;
-    try {
-      await fn();
-    } catch (error) {
-      console.error(error);
-    }
-    let duration;
-    if (measureMemory) {
-      duration = normalizedRss() | 0;
-    } else {
-      duration = ((process.resourceUsage().userCPUTime - start) / 1e3) | 0;
-    }
+    const start = cpuTimeMicros();
+    // Let errors propagate: a failed iteration must stop the run, not be
+    // recorded as a (misleadingly fast) sample.
+    await fn();
+    const duration = (cpuTimeMicros() - start) / 1e3;
     durations.push(duration);
     spinner(i, runNum, duration);
   }
@@ -103,11 +111,7 @@ async function batch(durations, runNum, fn) {
 
 async function run(durations, runNum, fn) {
   if (runNum < runs) {
-    try {
-      await batch(durations, ++runNum, fn);
-    } catch (error) {
-      console.error(error);
-    }
+    await batch(durations, ++runNum, fn);
     resetLine();
     const batchStart = (runNum - 1) * batchSize;
     process.stdout.write(
@@ -287,7 +291,6 @@ async function testPerf(runs, batches, testName) {
       );
       break;
     case 'stream':
-    default:
       console.log('testing stream');
       printPerf(
         // Hard-code the test label for the default case only
@@ -305,4 +308,8 @@ async function testPerf(runs, batches, testName) {
       );
   }
 }
-testPerf(runs, batchSize, testName);
+testPerf(runs, batchSize, testName).catch((error) => {
+  resetLine();
+  console.error(error);
+  process.exit(1);
+});
