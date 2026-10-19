@@ -62,7 +62,7 @@ Control validation strictness with `ErrorLevel`:
 - `THROW`: Throw on invalid data (strict mode, good for testing)
 
 ### Performance
-`npm run test:perf` (`tests/perf.mjs`) no longer has the flag-parsing and error-handling bugs, and it measures user + system CPU time, but it still runs every sample in one process with weak statistics, so it isn't fit for before-and-after comparisons. See [docs/performance/methodology-review.md](docs/performance/methodology-review.md) for the issues and [docs/performance/measurement-plan.md](docs/performance/measurement-plan.md) for the metrics and the replacement harness.
+To compare performance before and after a change, run `npm run bench:compare -- <base-ref>`; `npm run bench` runs the full suite and `npm run test:memory` checks that streaming uses bounded memory. See [bench/README.md](bench/README.md). `npm run test:perf` (`tests/perf.mjs`) no longer has the flag-parsing and error-handling bugs, but it runs every sample in one process with weak statistics, so don't use it for before-and-after comparisons. See [docs/performance/measurement-plan.md](docs/performance/measurement-plan.md) for the metrics and design.
 
 ## Package Distribution
 

@@ -1,0 +1,58 @@
+name: Benchmarks (pull request)
+
+# Benchmarks a pull request from a branch of this repository against the
+# stored master history, and posts the result as a check and a comment.
+# Runs only on pull requests with the `performance` label. Pull requests
+# from forks get no secrets, so they use bench-fork-pr-run.yml and
+# bench-fork-pr-track.yml instead.
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'performance')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/configure-nodejs
+        with:
+          node-version: 24.x
+      - uses: ./.github/actions/install-hyperfine
+      - uses: bencherdev/bencher@f80847436d7157936b40525db4c2a1064124f04a # v0.6.13
+
+      - name: Run benchmarks
+        run: npm run bench
+
+      # Compares with stored master history, so the job never builds master.
+      - name: Track benchmarks with Bencher
+        env:
+          BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT || 'sitemap-js' }}
+        run: |
+          bencher run \
+            --branch "$GITHUB_HEAD_REF" \
+            --start-point "$GITHUB_BASE_REF" \
+            --start-point-hash '${{ github.event.pull_request.base.sha }}' \
+            --start-point-clone-thresholds \
+            --start-point-reset \
+            --hash '${{ github.event.pull_request.head.sha }}' \
+            --testbed ubuntu-latest \
+            --adapter json \
+            --file bench/results/bmf.json \
+            --error-on-alert \
+            --github-actions '${{ secrets.GITHUB_TOKEN }}'

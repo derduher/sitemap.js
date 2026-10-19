@@ -1,0 +1,94 @@
+name: Benchmarks (fork pull request, track)
+
+# Second half of benchmarking a pull request from a fork: sends the results
+# that bench-fork-pr-run.yml uploaded to Bencher, which posts a check and a
+# comment. It runs in this repository's context with its secrets, so it
+# never checks out or runs the pull request's code; it only reads the
+# uploaded files, and treats them as untrusted input.
+on:
+  workflow_run:
+    workflows: ['Benchmarks (fork pull request, run)']
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  track:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      # The run workflow skips its job on pull requests without the
+      # `performance` label, and then uploads nothing.
+      - name: Check for uploaded results
+        id: results
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --jq '[.artifacts[] | select(.name == "bench-fork-pr")] | length')
+          echo "found=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.results.outputs.found == 'true'
+        with:
+          name: bench-fork-pr
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: bencherdev/bencher@f80847436d7157936b40525db4c2a1064124f04a # v0.6.13
+        if: steps.results.outputs.found == 'true'
+
+      # The uploaded files come from a run that executed the pull request's
+      # code, so they can be forged. Take only the PR number from the
+      # payload, then read everything else from the GitHub API and require
+      # the PR's head commit to match the run's, which GitHub sets. Keep the
+      # values in this step's shell instead of $GITHUB_ENV, so a forged value
+      # can't set other environment variables. The Bencher branch is the
+      # head label (owner:branch), so a fork's `master` can't land in
+      # master's history.
+      - name: Track benchmarks with Bencher
+        if: steps.results.outputs.found == 'true'
+        env:
+          BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT || 'sitemap-js' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          PR_NUMBER=$(jq -r '.number' event.json)
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::event.json has no valid pull request number"
+            exit 1
+          fi
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          PR_HEAD_SHA=$(jq -r '.head.sha' <<< "$pr")
+          if [ "$PR_HEAD_SHA" != "$RUN_HEAD_SHA" ]; then
+            echo "::error::Pull request #$PR_NUMBER is at $PR_HEAD_SHA, but the benchmarks ran on $RUN_HEAD_SHA"
+            exit 1
+          fi
+          PR_HEAD=$(jq -r '.head.label' <<< "$pr")
+          PR_BASE=$(jq -r '.base.ref' <<< "$pr")
+          PR_BASE_SHA=$(jq -r '.base.sha' <<< "$pr")
+
+          bencher run \
+            --branch "$PR_HEAD" \
+            --start-point "$PR_BASE" \
+            --start-point-hash "$PR_BASE_SHA" \
+            --start-point-clone-thresholds \
+            --start-point-reset \
+            --hash "$PR_HEAD_SHA" \
+            --testbed ubuntu-latest \
+            --adapter json \
+            --file bmf.json \
+            --error-on-alert \
+            --ci-number "$PR_NUMBER" \
+            --github-actions "$GH_TOKEN"

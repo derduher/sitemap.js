@@ -27,8 +27,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
+  lstatSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { cpus, platform, tmpdir } from 'node:os';
@@ -81,10 +82,8 @@ const run = (cmd, args, cwd) =>
     stdio: ['ignore', 'pipe', 'inherit'],
   }).trim();
 
-/** Check out and build `ref` in a temporary worktree; return its path. */
-function buildBase(ref) {
-  const dir = mkdtempSync(join(tmpdir(), 'sitemap-bench-base-'));
-  run('git', ['worktree', 'add', '--detach', dir, ref], REPO_ROOT);
+/** Install dependencies for, and build, the base worktree in `dir`. */
+function buildBase(ref, dir) {
   const lockfile = (root) => {
     const path = join(root, 'package-lock.json');
     return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
@@ -102,7 +101,6 @@ function buildBase(ref) {
   }
   console.log(`Building ${ref} in ${dir}`);
   run('npm', ['run', 'build'], dir);
-  return dir;
 }
 
 const pct = (x) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`;
@@ -148,8 +146,7 @@ if (!baseRef) {
 let baseDir;
 try {
   checkHyperfine();
-  // Benchmarks with no size have nothing to compare beyond startup, which
-  // the startup scenario already covers, so the filter keeps it.
+  // Always includes startup, so every comparison reports it too.
   const scenarios = selectScenarios(values.scenario);
   const rounds = Number(values.rounds);
   const threshold = Number(values.threshold) / 100;
@@ -166,9 +163,13 @@ try {
 
   console.log('Building the working tree');
   run('npm', ['run', 'build'], REPO_ROOT);
-  baseDir = buildBase(baseRef);
+  const dir = mkdtempSync(join(tmpdir(), 'sitemap-bench-base-'));
+  run('git', ['worktree', 'add', '--detach', dir, baseRef], REPO_ROOT);
+  // Set before building, so the finally block removes the worktree even if
+  // the build fails.
+  baseDir = dir;
+  buildBase(baseRef, baseDir);
 
-  rmSync(values.results, { recursive: true, force: true });
   mkdirSync(values.results, { recursive: true });
   const builds = { base: baseDir, head: REPO_ROOT };
 
@@ -230,8 +231,12 @@ try {
 } finally {
   if (baseDir) {
     // Remove the node_modules symlink first, so nothing can follow it into
-    // this checkout's install.
-    rmSync(join(baseDir, 'node_modules'), { force: true });
+    // this checkout's install. A real install (after npm ci) goes with the
+    // worktree.
+    const modules = join(baseDir, 'node_modules');
+    if (lstatSync(modules, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      unlinkSync(modules);
+    }
     run('git', ['worktree', 'remove', '--force', baseDir], REPO_ROOT);
   }
 }

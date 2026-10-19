@@ -1,6 +1,8 @@
 # Performance measurement plan
 
-Drafted: 2026-10-19.
+Drafted: 2026-10-19. Phases 1–5 implemented 2026-10-19; see
+[Implementation notes](#implementation-notes) for where the code differs from
+this plan, and [`bench/README.md`](../../bench/README.md) for how to run it.
 
 This document defines the performance metrics sitemap.js tracks, how to
 measure each one, and the steps to build the tooling. It replaces the approach
@@ -109,7 +111,7 @@ stable identifiers; Bencher keys results by them.
 | `generate-urls` | `SitemapStream` | 1M generated URLs | `/dev/null` |
 | `generate-rich` | `SitemapStream` | 100k items with video, image, news, and `hreflang` links | `/dev/null` |
 | `generate-from-lines` | `lineSeparatedURLsToSitemapOptions` → `SitemapStream` | `perf-data.json.txt` (21,753 JSON lines) | `/dev/null` |
-| `split-and-index` | `SitemapAndIndexStream` | 1M generated URLs, default 50,000 limit | Files in a temp directory |
+| `split-and-index` | `SitemapAndIndexStream` | 1M generated URLs, default 45,000 limit | Files in a temp directory |
 | `simple-gzip` | `simpleSitemapAndIndex` | 1M generated URLs, gzip on | Files in a temp directory |
 | `parse-xml` | `XMLToSitemapItemStream` | `perf-data.xml` (21,753 `<url>` entries) | Object sink that counts items |
 | `parse-index` | `XMLToSitemapIndexStream` | Generated index with 50,000 entries (the protocol maximum) | Object sink that counts items |
@@ -198,9 +200,9 @@ asserts that each completes. A pipeline that buffers JavaScript objects runs
 out of heap; one that streams doesn't, on any platform.
 
 The heap cap doesn't cover `Buffer` memory, which lives outside the V8 heap.
-The scenario also samples `process.memoryUsage().external` plus
-`arrayBuffers` during the run and exits non-zero if the peak exceeds a fixed
-budget. That catches broken backpressure, where serialized output piles up in
+The scenario also samples `process.memoryUsage().external`, which already
+includes `arrayBuffers` and so every `Buffer`, during the run and exits
+non-zero if the peak exceeds a fixed budget. That catches broken backpressure, where serialized output piles up in
 a stream's internal buffer.
 
 This check is a plain Node.js script, not a hyperfine run, because it asserts
@@ -270,7 +272,8 @@ adopts.
    `bencher run --branch master --testbed ubuntu-latest --adapter json`,
    `--threshold-test t_test`, `--threshold-upper-boundary 0.99`,
    `--thresholds-reset`, and `--error-on-alert`, with one threshold per
-   measure. This builds the history every comparison uses. Needs
+   measure. Throughput regresses downward, so its threshold sets a lower
+   boundary of 0.99 instead. This builds the history every comparison uses. Needs
    `checks: write`.
 2. **Pull requests from this repository.** On `pull_request`, run the same
    benchmarks and record them on the PR's branch with
@@ -285,7 +288,10 @@ adopts.
    with no secrets and uploads the BMF file and the event payload as
    artifacts. A second workflow, triggered by `workflow_run` when the first
    succeeds, downloads them and runs `bencher run` with the secret and
-   `--ci-number` set to the PR number. Only the second workflow gets
+   `--ci-number` set to the PR number. The uploaded files come from a run
+   of the PR's code, so the second workflow takes only the PR number from
+   them, reads the branches and commits from the GitHub API, and checks
+   that the PR's head commit matches the run's. Only the second workflow gets
    `checks: write` and `pull-requests: write`, and it never runs the PR's
    code.
 
@@ -401,6 +407,53 @@ Done when: one performance tool remains, this document no longer refers to
 `tests/perf.mjs` except for history, and the Performance note in `CLAUDE.md`
 no longer mentions `npm run test:perf` and still points to
 `npm run bench:compare` for before-and-after comparisons.
+
+## Implementation notes
+
+Where the code in `bench/` differs from the plan above, and why:
+
+- **Corpus scenarios tolerate validation warnings.** `perf-data.xml` and
+  `perf-data.json.txt` have video titles over the 100-character limit, so
+  `generate-from-lines`, `parse-xml`, and `round-trip` log warnings at the
+  `warn` level. The scenarios pass a logger that counts and discards
+  messages, so no scenario measures console output. Scenarios with
+  synthetic input fail on any warning.
+- **`parse-xml` reads from a child generator at both sizes,** not from a
+  cache at 100k, so the memory-growth metric compares like with like. The
+  generator writes slices of one `Buffer` and peaks at about 104 MB, below
+  the parser's 146 MB, so peak memory still measures the parser.
+- **`parse-xml` runs 10 times, not 20,** because one run at 1M items takes
+  about 37 seconds.
+- **Pass-based scenarios repeat their corpus:** `generate-from-lines` 10
+  times (217,530 items), `round-trip` twice (43,506), and `parse-index` 4
+  times (200,000), so each run takes about 1 second or more.
+  `generate-urls` and `split-and-index` at 100k still run in under 1
+  second, because metric 2 needs that size.
+- **`simple-gzip`, `cli`, and the parse scenarios run at `warn` only.**
+  `simpleSitemapAndIndex` and the CLI have no error-level option, and the
+  validation-overhead metric covers generation.
+- **BMF stores raw latency, CPU time, and peak RSS,** with the quartiles as
+  `lower_value` and `upper_value`. The printed summary subtracts the
+  startup baseline; storing raw values keeps `startup` itself comparable.
+- **The bounded-memory check defers some sink writes.** A sink that always
+  calls back synchronously never applies backpressure, so with
+  `--buffer-budget` set, sinks acknowledge every 64th write on a later
+  event-loop turn. Without that, a pipeline that ignored backpressure
+  passed. `SitemapAndIndexStream` waits for each file to finish, so a
+  backpressure bug inside it piles up at most one file's worth of output,
+  which the check correctly allows.
+- **`bench:compare` passes the build as a hyperfine parameter,**
+  `-L lib <base>,<head>`, instead of two commands, because hyperfine
+  requires one `--command-name` per benchmark once parameter lists are in
+  use. The order still alternates each round.
+- **Noise floor.** An A/A run (`npm run bench:compare -- HEAD`, 4 rounds of
+  5 runs) on an Apple M5 Pro with Node.js 26.2.0, covering every scenario
+  except `parse-xml`, had its widest 95% interval at -2.7% to +3.5%
+  (`round-trip` wall time). Most intervals were within ±1.5%, so the 5%
+  default threshold sits above the noise floor on that machine.
+- **The fork tracking workflow names the Bencher branch after the PR's head
+  label** (`owner:branch`), so a fork's `master` branch can't write into
+  this repository's `master` history.
 
 ## Open questions
 
