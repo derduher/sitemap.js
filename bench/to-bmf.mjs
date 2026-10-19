@@ -106,7 +106,7 @@ const range = (values, scale = 1) => {
  * @param {string[]} files - hyperfine JSON exports, including startup.json
  */
 export function convert(files) {
-  const benchmarks = files.flatMap(readExport);
+  const benchmarks = files.flatMap((file) => readExport(file));
   const startup = benchmarks.find((b) => b.name === 'startup');
   if (!startup) {
     throw new Error(
