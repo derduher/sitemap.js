@@ -17,7 +17,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Skips the benchmarks, rather than failing after them, in a repository
+  # without a BENCHER_API_KEY secret. A job-level `if` can't read secrets,
+  # so this job checks and the benchmark job reads its output.
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
+        run: |
+          if [ -n "$BENCHER_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::BENCHER_API_KEY is not set, so benchmarks are skipped."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
   benchmark:
+    needs: config
+    if: needs.config.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,7 +61,7 @@ jobs:
       - name: Track benchmarks with Bencher
         env:
           BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
-          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT || 'sitemap-js' }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT || 'sitemap' }}
         run: |
           bencher run \
             --branch master \

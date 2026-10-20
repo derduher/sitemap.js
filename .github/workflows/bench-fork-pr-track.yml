@@ -27,13 +27,20 @@ jobs:
 
     steps:
       # The run workflow skips its job on pull requests without the
-      # `performance` label, and then uploads nothing.
+      # `performance` label, and then uploads nothing. Without a
+      # BENCHER_API_KEY secret there is nowhere to send results.
       - name: Check for uploaded results
         id: results
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
         run: |
+          if [ -z "$BENCHER_API_KEY" ]; then
+            echo "::notice::BENCHER_API_KEY is not set, so results aren't tracked."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
             --jq '[.artifacts[] | select(.name == "bench-fork-pr")] | length')
           echo "found=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
@@ -60,7 +67,7 @@ jobs:
         if: steps.results.outputs.found == 'true'
         env:
           BENCHER_API_KEY: ${{ secrets.BENCHER_API_KEY }}
-          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT || 'sitemap-js' }}
+          BENCHER_PROJECT: ${{ vars.BENCHER_PROJECT || 'sitemap' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
